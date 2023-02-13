@@ -15,7 +15,6 @@ use icrate::{
         NSMutableDictionary, NSNumber, NSString, NSUserDomainMask, NSURL,
     },
 };
-use inline_python::python;
 
 #[derive(Debug, Clone)]
 pub enum Screen {
@@ -61,9 +60,8 @@ impl Screen {
     }
 }
 
-pub fn get_from_directory(url: &NSURL) -> Option<Id<NSURL, Shared>> {
+pub async fn get_from_directory(url: &NSURL) -> Option<Id<NSURL, Shared>> {
     unsafe {
-        let py_context = inline_python::Context::new();
         let app_support_directory = NSFileManager::defaultManager()
             .URLForDirectory_inDomain_appropriateForURL_create_error(
                 NSApplicationSupportDirectory,
@@ -79,54 +77,48 @@ pub fn get_from_directory(url: &NSURL) -> Option<Id<NSURL, Shared>> {
         )?;
 
         let db_path = db_url.path()?.to_string();
-        let db_path = db_path.as_str();
 
-        py_context.run(python! {
-            // Import the sqlite3 package
-            import sqlite3
+        let conn = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(&db_path)
+            .await
+            .ok()?;
 
-            // Connect to the wallpaper database
-            conn = sqlite3.connect('db_path)
-            c = conn.cursor()
-        });
+        use sqlx::FromRow;
 
-        let table = "data";
-        let column = "value";
-        let row_id = "rowid";
-
-        let max_id: isize = {
-            py_context.run(python! {
-                c.execute("SELECT {} FROM {} ORDER BY {} DESC LIMIT 1".format('row_id, 'table, 'row_id))
-                data = c.fetchall()
-
-                result = data[0][0]
-            });
-
-            py_context.get("result")
+        let max_id = {
+            #[derive(Clone, FromRow, Debug)]
+            struct DbRow {
+                rowid: i32,
+            }
+            let row =
+                sqlx::query_as::<_, DbRow>("SELECT rowid FROM data ORDER BY rowid DESC LIMIT 1")
+                    .fetch_one(&conn)
+                    .await
+                    .unwrap();
+            row.rowid
         };
 
         let image: String = {
-            py_context.run(python! {
-                c.execute("SELECT {} FROM {} WHERE {} == {}".format('column, 'table, 'row_id, 'max_id))
-                data = c.fetchall()
+            #[derive(Clone, FromRow, Debug)]
+            struct DbRow {
+                value: String,
+            }
 
-                result = data[0][0]
-            });
+            let row = sqlx::query_as::<_, DbRow>("SELECT value FROM data WHERE rowid == ?")
+                .bind(max_id)
+                .fetch_one(&conn)
+                .await
+                .unwrap();
 
-            py_context.get("result")
+            row.value
         };
-
-        py_context.run(python! {
-            c.close()
-            conn.close()
-        });
 
         url.URLByAppendingPathComponent_isDirectory(&NSString::from_str(&image), false)
     }
 }
 
 /// Get the current wallpapers.
-pub fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
+pub async fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
     unsafe {
         let screen = match screen {
             Some(sceen) => sceen,
@@ -139,27 +131,32 @@ pub fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
             .filter_map(|screen| NSWorkspace::sharedWorkspace().desktopImageURLForScreen(screen))
             .collect::<Vec<Id<NSURL, Shared>>>();
 
-        wallpaper_urls
-            .iter()
-            .filter_map(|url| {
-                if url.hasDirectoryPath() {
-                    get_from_directory(url)
-                } else {
-                    Some(url.to_owned())
+        let mut urls = Vec::new();
+        for url in &wallpaper_urls {
+            if url.hasDirectoryPath() {
+                if let Some(url) = get_from_directory(url).await {
+                    urls.push(url)
                 }
-            })
-            .collect::<Vec<Id<NSURL, Shared>>>()
+            } else {
+                urls.push(url.to_owned());
+            }
+        }
+
+        urls
     }
 }
 
-fn force_refresh_if_needed(image: &NSURL, screen: &Screen) -> Result<(), Id<NSError, Shared>> {
+async fn force_refresh_if_needed(
+    image: &NSURL,
+    screen: &Screen,
+) -> Result<(), Id<NSError, Shared>> {
     let mut should_sleep = false;
-    let current_images = get_current(Some(screen));
+    let current_images = get_current(Some(screen)).await;
 
     for (index, screen) in screen.nsscreens().iter().enumerate() {
-        unsafe {
-            if image == current_images[index].borrow() {
-                should_sleep = true;
+        if image == current_images[index].borrow() {
+            should_sleep = true;
+            unsafe {
                 NSWorkspace::sharedWorkspace().setDesktopImageURL_forScreen_options_error(
                     &NSURL::fileURLWithPath(&NSString::from_str("./")),
                     screen,
@@ -177,7 +174,7 @@ fn force_refresh_if_needed(image: &NSURL, screen: &Screen) -> Result<(), Id<NSEr
 }
 
 /// Set an image URL as wallpaper.
-pub fn set_image(
+pub async fn set_image(
     image: &NSURL,
     screen: Option<&Screen>,
     scale: Option<Scale>,
@@ -245,7 +242,7 @@ pub fn set_image(
             &NSString::stringWithString(NSWorkspaceDesktopImageFillColorKey),
         );
 
-        force_refresh_if_needed(image, screen)?;
+        force_refresh_if_needed(image, screen).await?;
 
         for screen in screen.nsscreens().iter() {
             NSWorkspace::sharedWorkspace()
@@ -257,11 +254,14 @@ pub fn set_image(
 }
 
 /// Set a solid color as wallpaper.
-pub fn set_color(color: &NSColor, screen: Option<&Screen>) -> Result<(), Id<NSError, Shared>> {
+pub async fn set_color(
+    color: &NSColor,
+    screen: Option<&Screen>,
+) -> Result<(), Id<NSError, Shared>> {
     unsafe {
         let transparent_image = NSURL::fileURLWithPath(&NSString::from_str("/System/Library/PreferencePanes/DesktopScreenEffectsPref.prefPane/Contents/Resources/DesktopPictures.prefPane/Contents/Resources/Transparent.tiff"));
 
-        set_image(&transparent_image, screen, Some(Scale::Fit), Some(color))
+        set_image(&transparent_image, screen, Some(Scale::Fit), Some(color)).await
     }
 }
 

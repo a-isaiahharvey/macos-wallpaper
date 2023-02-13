@@ -12,3 +12,4 @@ macos-wallpaper = { path = "../macos-wallpaper" }
 icrate = { git = "https://github.com/madsmtm/objc2", features = [
     "AppKit_NSColor",
 ] }
+tokio = { version = "1.25.0", features = ["macros", "rt-multi-thread"] }

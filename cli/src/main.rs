@@ -47,12 +47,13 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Id<NSError, Shared>> {
+#[tokio::main]
+async fn main() -> Result<(), Id<NSError, Shared>> {
     let args = Args::parse();
 
     match args.command {
         Commands::GetCurrent { screen } => {
-            let wallpapers = get_current(screen_from_str(&screen).as_ref());
+            let wallpapers = get_current(screen_from_str(&screen).as_ref()).await;
 
             for wallpaper in wallpapers {
                 if let Some(path) = unsafe { wallpaper.path() } {
@@ -64,18 +65,18 @@ fn main() -> Result<(), Id<NSError, Shared>> {
         Commands::SetImage { path } => unsafe {
             let image = NSURL::fileURLWithPath(&NSString::from_str(&path));
 
-            set_image(&image, None, None, None)?;
+            set_image(&image, None, None, None).await?;
         },
 
         Commands::SetHexColor { color } => {
             if let Some(color) = nscolor_from_hex(&color) {
-                set_color(&color, None)?;
+                set_color(&color, None).await?;
             }
         }
 
         Commands::SetRgbColor { r, g, b } => {
             if let Some(color) = nscolor_from_rgb(r, g, b) {
-                set_color(&color, None)?;
+                set_color(&color, None).await?;
             }
         }
     }
