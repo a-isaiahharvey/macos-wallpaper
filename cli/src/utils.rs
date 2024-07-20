@@ -1,11 +1,11 @@
-use icrate::{
-    objc2::rc::{Id, Shared},
-    AppKit::{NSColor, NSScreen},
-    Foundation::CGFloat,
-};
-use macos_wallpaper::Screen;
+use std::fmt::Write;
 
-pub fn nscolor_from_hex(hex: &str) -> Option<Id<NSColor, Shared>> {
+use macos_wallpaper::Screen;
+use objc2::rc::Id;
+use objc2_app_kit::{NSColor, NSScreen};
+use objc2_foundation::{CGFloat, MainThreadMarker};
+
+pub fn nscolor_from_hex(hex: &str) -> Option<Id<NSColor>> {
     let mut result = hex.to_string();
 
     if let Some(stripped) = hex.strip_prefix('#') {
@@ -13,10 +13,10 @@ pub fn nscolor_from_hex(hex: &str) -> Option<Id<NSColor, Shared>> {
     }
 
     if result.len() == 3 {
-        result = result
-            .chars()
-            .map(|c| format!("{c}{c}"))
-            .collect::<String>();
+        result = result.chars().fold(String::new(), |mut output, c| {
+            let _ = write!(output, "{c}{c}");
+            output
+        });
     }
 
     let hex = u32::from_str_radix(&result, 16).ok()?;
@@ -31,7 +31,7 @@ pub fn nscolor_from_hex(hex: &str) -> Option<Id<NSColor, Shared>> {
     }
 }
 
-pub fn nscolor_from_rgb(r: u8, g: u8, b: u8) -> Option<Id<NSColor, Shared>> {
+pub fn nscolor_from_rgb(r: u8, g: u8, b: u8) -> Option<Id<NSColor>> {
     unsafe {
         Some(NSColor::colorWithCalibratedRed_green_blue_alpha(
             r as CGFloat / 255.,
@@ -48,7 +48,8 @@ pub fn screen_from_str(value: &str) -> Option<Screen> {
         "main" => Some(Screen::Main),
         _ => unsafe {
             if let Ok(index) = value.parse::<usize>() {
-                if index < NSScreen::screens().len() {
+                let mtm = MainThreadMarker::new_unchecked();
+                if index < NSScreen::screens(mtm).len() {
                     return Some(Screen::Index(index));
                 }
             }

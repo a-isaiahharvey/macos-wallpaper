@@ -1,19 +1,13 @@
 use std::{borrow::Borrow, thread::sleep, time::Duration};
 
-use icrate::{
-    objc2::{
-        rc::{Id, Shared},
-        runtime::Object,
-    },
-    AppKit::{
-        NSColor, NSImageScaleAxesIndependently, NSImageScaleProportionallyUpOrDown, NSScreen,
-        NSWorkspace, NSWorkspaceDesktopImageAllowClippingKey, NSWorkspaceDesktopImageFillColorKey,
-        NSWorkspaceDesktopImageScalingKey,
-    },
-    Foundation::{
-        NSApplicationSupportDirectory, NSArray, NSDictionary, NSError, NSFileManager,
-        NSMutableDictionary, NSNumber, NSString, NSUserDomainMask, NSURL,
-    },
+use objc2::{rc::Id, runtime::AnyObject};
+use objc2_app_kit::{
+    NSColor, NSImageScaling, NSScreen, NSWorkspace, NSWorkspaceDesktopImageAllowClippingKey,
+    NSWorkspaceDesktopImageFillColorKey, NSWorkspaceDesktopImageScalingKey,
+};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSDictionary, NSError, NSFileManager, NSMutableDictionary, NSNumber,
+    NSSearchPathDirectory, NSSearchPathDomainMask, NSString, NSURL,
 };
 
 #[derive(Debug, Clone)]
@@ -21,7 +15,7 @@ pub enum Screen {
     All,
     Main,
     Index(usize),
-    NSScreen(Vec<Id<NSScreen, Shared>>),
+    NSScreen(Vec<Id<NSScreen>>),
 }
 
 #[derive(Debug, Clone)]
@@ -35,21 +29,23 @@ pub enum Scale {
 }
 
 impl Screen {
-    pub fn nsscreens(&self) -> Id<NSArray<NSScreen>, Shared> {
+    pub fn nsscreens(&self) -> Id<NSArray<NSScreen>> {
         unsafe {
+            let mtm: MainThreadMarker = MainThreadMarker::new_unchecked();
+
             match self {
-                Screen::All => NSScreen::screens(),
+                Screen::All => NSScreen::screens(mtm),
                 Screen::Main => {
-                    if let Some(main_screen) = NSScreen::mainScreen() {
-                        NSArray::from_slice(&[main_screen])
+                    if let Some(main_screen) = NSScreen::mainScreen(mtm) {
+                        NSArray::from_slice(&[&main_screen])
                     } else {
                         NSArray::array()
                     }
                 }
                 Screen::Index(index) => {
-                    if NSScreen::screens().count() > *index {
-                        let screen = NSScreen::screens().objectAtIndex(*index);
-                        NSArray::from_slice(&[screen])
+                    if NSScreen::screens(mtm).count() > *index {
+                        let screen = NSScreen::screens(mtm).objectAtIndex(*index);
+                        NSArray::from_slice(&[&screen])
                     } else {
                         NSArray::array()
                     }
@@ -60,12 +56,12 @@ impl Screen {
     }
 }
 
-pub async fn get_from_directory(url: &NSURL) -> Option<Id<NSURL, Shared>> {
+pub async fn get_from_directory(url: &NSURL) -> Option<Id<NSURL>> {
     unsafe {
         let app_support_directory = NSFileManager::defaultManager()
             .URLForDirectory_inDomain_appropriateForURL_create_error(
-                NSApplicationSupportDirectory,
-                NSUserDomainMask,
+                NSSearchPathDirectory::NSApplicationSupportDirectory,
+                NSSearchPathDomainMask::NSUserDomainMask,
                 None,
                 false,
             )
@@ -118,7 +114,7 @@ pub async fn get_from_directory(url: &NSURL) -> Option<Id<NSURL, Shared>> {
 }
 
 /// Get the current wallpapers.
-pub async fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
+pub async fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL>> {
     unsafe {
         let screen = match screen {
             Some(sceen) => sceen,
@@ -129,7 +125,7 @@ pub async fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
             .nsscreens()
             .iter()
             .filter_map(|screen| NSWorkspace::sharedWorkspace().desktopImageURLForScreen(screen))
-            .collect::<Vec<Id<NSURL, Shared>>>();
+            .collect::<Vec<Id<NSURL>>>();
 
         let mut urls = Vec::new();
         for url in &wallpaper_urls {
@@ -146,10 +142,7 @@ pub async fn get_current(screen: Option<&Screen>) -> Vec<Id<NSURL, Shared>> {
     }
 }
 
-async fn force_refresh_if_needed(
-    image: &NSURL,
-    screen: &Screen,
-) -> Result<(), Id<NSError, Shared>> {
+async fn force_refresh_if_needed(image: &NSURL, screen: &Screen) -> Result<(), Id<NSError>> {
     let mut should_sleep = false;
     let current_images = get_current(Some(screen)).await;
 
@@ -179,9 +172,9 @@ pub async fn set_image(
     screen: Option<&Screen>,
     scale: Option<Scale>,
     fill_color: Option<&NSColor>,
-) -> Result<(), Id<NSError, Shared>> {
+) -> Result<(), Id<NSError>> {
     unsafe {
-        let options = NSMutableDictionary::<NSString, Object>::dictionary();
+        let mut options = NSMutableDictionary::<NSString, AnyObject>::dictionary();
 
         let screen = match screen {
             Some(value) => value,
@@ -196,49 +189,57 @@ pub async fn set_image(
         match scale {
             Scale::Auto => (),
             Scale::Fill => {
-                options.setObject_forKey(
-                    &NSNumber::numberWithUnsignedInteger(NSImageScaleProportionallyUpOrDown),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithUnsignedInteger(
+                        NSImageScaling::NSImageScaleProportionallyUpOrDown.0,
+                    )),
                     &NSString::stringWithString(NSWorkspaceDesktopImageScalingKey),
                 );
-                options.setObject_forKey(
-                    &NSNumber::numberWithBool(true),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithBool(true)),
                     &NSString::stringWithString(NSWorkspaceDesktopImageAllowClippingKey),
                 );
             }
             Scale::Fit => {
-                options.setObject_forKey(
-                    &NSNumber::numberWithUnsignedInteger(NSImageScaleProportionallyUpOrDown),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithUnsignedInteger(
+                        NSImageScaling::NSImageScaleProportionallyUpOrDown.0,
+                    )),
                     &NSString::stringWithString(NSWorkspaceDesktopImageScalingKey),
                 );
-                options.setObject_forKey(
-                    &NSNumber::numberWithBool(false),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithBool(false)),
                     &NSString::stringWithString(NSWorkspaceDesktopImageAllowClippingKey),
                 );
             }
             Scale::Stretch => {
-                options.setObject_forKey(
-                    &NSNumber::numberWithUnsignedInteger(NSImageScaleAxesIndependently),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithUnsignedInteger(
+                        NSImageScaling::NSImageScaleAxesIndependently.0,
+                    )),
                     &NSString::stringWithString(NSWorkspaceDesktopImageScalingKey),
                 );
-                options.setObject_forKey(
-                    &NSNumber::numberWithBool(true),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithBool(true)),
                     &NSString::stringWithString(NSWorkspaceDesktopImageAllowClippingKey),
                 );
             }
             Scale::Center => {
-                options.setObject_forKey(
-                    &NSNumber::numberWithUnsignedInteger(NSImageScaleProportionallyUpOrDown),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithUnsignedInteger(
+                        NSImageScaling::NSImageScaleProportionallyUpOrDown.0,
+                    )),
                     &NSString::stringWithString(NSWorkspaceDesktopImageScalingKey),
                 );
-                options.setObject_forKey(
-                    &NSNumber::numberWithBool(false),
+                options.setValue_forKey(
+                    Some(&NSNumber::numberWithBool(false)),
                     &NSString::stringWithString(NSWorkspaceDesktopImageAllowClippingKey),
                 );
             }
         }
 
-        options.setObject_forKey(
-            fill_color.unwrap_or(&NSColor::clearColor()),
+        options.setValue_forKey(
+            Some(fill_color.unwrap_or(&NSColor::clearColor())),
             &NSString::stringWithString(NSWorkspaceDesktopImageFillColorKey),
         );
 
@@ -254,10 +255,7 @@ pub async fn set_image(
 }
 
 /// Set a solid color as wallpaper.
-pub async fn set_color(
-    color: &NSColor,
-    screen: Option<&Screen>,
-) -> Result<(), Id<NSError, Shared>> {
+pub async fn set_color(color: &NSColor, screen: Option<&Screen>) -> Result<(), Id<NSError>> {
     unsafe {
         let transparent_image = NSURL::fileURLWithPath(&NSString::from_str("/System/Library/PreferencePanes/DesktopScreenEffectsPref.prefPane/Contents/Resources/DesktopPictures.prefPane/Contents/Resources/Transparent.tiff"));
 
@@ -268,7 +266,8 @@ pub async fn set_color(
 /// Names of available screens.
 pub fn screen_names() -> Vec<String> {
     unsafe {
-        NSScreen::screens()
+        let mtm = MainThreadMarker::new_unchecked();
+        NSScreen::screens(mtm)
             .iter()
             .map(|screen| screen.localizedName().to_string())
             .collect()

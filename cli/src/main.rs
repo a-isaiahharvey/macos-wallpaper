@@ -1,9 +1,8 @@
 use clap::{Parser, Subcommand};
-use icrate::{
-    objc2::rc::{Id, Shared},
-    Foundation::{NSError, NSString, NSURL},
-};
+
 use macos_wallpaper::{get_current, set_color, set_image};
+use objc2::rc::Id;
+use objc2_foundation::{NSError, NSString, NSURL};
 use utils::{nscolor_from_hex, nscolor_from_rgb, screen_from_str};
 
 mod utils;
@@ -48,7 +47,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Id<NSError, Shared>> {
+async fn main() -> Result<(), Id<NSError>> {
     let args = Args::parse();
 
     match args.command {

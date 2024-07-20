@@ -1,2 +1,10 @@
 [workspace]
 members = ["macos-wallpaper", "cli"]
+resolver = "2"
+
+[workspace.dependencies]
+objc2-app-kit = { version = "0.2.2" }
+clap = { version = "4.1.1" }
+tokio = { version = "1.25.0" }
+objc2 = { version = "0.5.2" }
+sqlx = { version = "0.7.4" }

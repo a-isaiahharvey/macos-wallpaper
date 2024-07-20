@@ -6,20 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-icrate = { git = "https://github.com/madsmtm/objc2", features = [
-    "apple",
-    "AppKit",
-    "AppKit_NSScreen",
-    "AppKit_NSColor",
-    "AppKit_NSImageView",
-    "AppKit_NSWorkspace",
-    "Foundation",
-    "Foundation_NSArray",
-    "Foundation_NSDictionary",
-    "Foundation_NSMutableDictionary",
-    "Foundation_NSFileManager",
-    "Foundation_NSURL",
-    "Foundation_NSNumber",
-] }
-sqlx = { version = "0.6.2", features = ["runtime-tokio-native-tls", "sqlite"] }
-tokio = { version = "1.25.0", features = ["macros", "rt-multi-thread"] }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true, features = ["NSCell", "NSColor", "NSScreen", "NSWorkspace"] }
+objc2-foundation = { version = "0.2.2", features = ["NSEnumerator", "NSKeyValueCoding", "NSPathUtilities", "NSString", "NSThread"] }
+sqlx = { workspace = true, features = ["runtime-tokio-native-tls", "sqlite"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
